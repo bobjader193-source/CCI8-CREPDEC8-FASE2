@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" href="/CCI8-CREPDEC8/icon-192.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./config.js"></script>
-<title>CCI 8 — Checklist de Conferência Integrada | V23</title>
+<title>CCI 8 — Checklist de Conferência Integrada | V24</title>
 <style>
 *{box-sizing:border-box}
 :root{
@@ -145,7 +145,7 @@ input:focus,textarea:focus{border-color:var(--dc-blue);box-shadow:0 0 0 3px #2d3
   header{padding:10px 12px}header img{width:56px;height:52px}.version{display:none}
 }
 
-/* ===== V23 PRO — interface visual destacada ===== */
+/* ===== V24 PRO — interface visual destacada ===== */
 body{background:linear-gradient(135deg,#061c48 0%,#0b2e69 42%,#202a79 72%,#5d176e 100%);color:#fff;min-height:100vh}
 body:after{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 15% 20%,#2d7be633 0,transparent 30%),radial-gradient(circle at 90% 80%,#f2832722 0,transparent 28%);z-index:-1}
 header{background:linear-gradient(100deg,#061a43,#0c3273 58%,#6a176e);border-bottom:4px solid var(--dc-orange);box-shadow:0 7px 24px #0005;padding:13px 22px}
@@ -424,24 +424,51 @@ function gerarPDFProcesso(id){
  const anterior=current; current=p; gerarPDF(); current=anterior;
 }
 async function editarProcesso(id){
- let p=getProcesses().find(x=>String(x.id)===String(id));
- if(!p && phase2Client && phase2User){
-   try{
-     const {data,error}=await phase2Client.from('processos').select('*').eq('id',String(id)).maybeSingle();
-     if(error) throw error;
-     if(data){
-       p={id:data.id,_cloud_id:data.id,municipio:data.municipio,evento:data.evento,cobrade:data.cobrade,data:data.data_ocorrencia||'',hora:data.hora_ocorrencia||'',decreto:data.decreto||'',processo:data.processo_s2id,agente:data.agente,answers:data.respostas||{},observations:data.observacoes||{},created:data.created_at,updated:data.updated_at};
-     }
-   }catch(e){ console.error('CCI8 edit load:',e); }
- }
- if(!p){alert('Processo não encontrado.');return}
- current=p;
- const groups=[...new Set(ITEMS.map(x=>x.group))];
- const firstPending=ITEMS.find(x=>current.answers?.[x.id]==='NÃO');
- idx=firstPending ? Math.max(0,groups.indexOf(firstPending.group)) : 0;
- renderItem();
- window.scrollTo({top:0,behavior:'instant'});
+  try{
+    let p=getProcesses().find(x=>String(x.id)===String(id));
+
+    // Sempre tenta atualizar o registro a partir do banco quando estamos na Fase 2.
+    if(phase2Client && phase2User){
+      const {data,error}=await phase2Client.from('processos').select('*').eq('id',String(id)).maybeSingle();
+      if(error) throw error;
+      if(data){
+        p={
+          id:data.id,
+          _cloud_id:data.id,
+          municipio:data.municipio||'',
+          evento:data.evento||'',
+          cobrade:data.cobrade||'',
+          data:data.data_ocorrencia||'',
+          hora:data.hora_ocorrencia||'',
+          decreto:data.decreto||'',
+          processo:data.processo_s2id||'',
+          agente:data.agente||'',
+          answers:data.respostas||{},
+          observations:data.observacoes||{},
+          created:data.created_at,
+          updated:data.updated_at
+        };
+      }
+    }
+
+    if(!p){
+      alert('Processo não encontrado.');
+      return;
+    }
+
+    current=p;
+    const groups=[...new Set(ITEMS.map(x=>x.group))];
+    const firstPending=ITEMS.find(x=>current.answers?.[x.id]==='NÃO');
+    idx=firstPending ? Math.max(0,groups.indexOf(firstPending.group)) : 0;
+
+    renderItem();
+    window.scrollTo({top:0,behavior:'instant'});
+  }catch(e){
+    console.error('CCI8 edit load:',e);
+    alert('Não foi possível abrir o processo para edição.\n\n'+(e?.message||e));
+  }
 }
+
 function newCase(){
  app.innerHTML=`<div class="card">
   <div class="eyebrow">Nova análise</div><h2>Identificação da ocorrência</h2>
@@ -564,6 +591,7 @@ function renderItem(){
    ${idx===0
      ? `<button class="btn ghost" onclick="voltarInicioProcesso()">⌂ VOLTAR À PÁGINA INICIAL</button>`
      : `<button class="btn ghost" onclick="saveVisibleObservations();idx=Math.max(0,idx-1);renderItem()">‹ GRUPO ANTERIOR</button>`}
+   <button class="btn ghost" type="button" onclick="saveVisibleObservations();alert('Alterações salvas com sucesso.');">💾 SALVAR ALTERAÇÕES</button>
    <button class="btn primary" onclick="nextGroup()">${idx===groups.length-1?'FINALIZAR E GERAR RELATÓRIO PDF':'PRÓXIMO GRUPO →'}</button>
   </div>
   ${idx!==0?`<div style="margin-top:14px;padding-top:12px;border-top:1px solid #dce3ec;text-align:center">
@@ -871,9 +899,9 @@ async function phase2Push(p){
       // Isso evita duplicidades mesmo sem depender de constraint UNIQUE.
       let existing=null;
       if(payload.processo_s2id){
-        const q=await phase2Client.from('processos').select('*').eq('processo_s2id',payload.processo_s2id).order('updated_at',{ascending:false}).limit(1).maybeSingle();
+        const q=await phase2Client.from('processos').select('*').eq('processo_s2id',payload.processo_s2id).order('updated_at',{ascending:false}).limit(1);
         if(q.error) throw q.error;
-        existing=q.data||null;
+        existing=(q.data||[])[0]||null;
       }
       if(existing){
         p._cloud_id=existing.id;
@@ -1002,6 +1030,10 @@ relatorios=async function(){
   phase2OriginalRelatorios();
 };
 saveProcess=phase2SaveProcess;
+
+// Garante que os botões dinâmicos chamem sempre as versões da Fase 2.
+window.editarProcesso=editarProcesso;
+window.gerarPDFProcesso=gerarPDFProcesso;
 
 (async()=>{
   try{

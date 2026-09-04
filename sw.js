@@ -1,6 +1,6 @@
-const CACHE='cci8-fase2-v3';
+const CACHE='cci8-fase2-v24';
 const BASE='/CCI8-CREPDEC8-FASE2/';
-const ASSETS=[BASE,BASE+'index.html',BASE+'manifest.json',BASE+'config.js',BASE+'icon-192.png',BASE+'icon-512.png'];
+const ASSETS=[BASE,BASE+'index.html',BASE+'manifest.json',BASE+'icon-192.png',BASE+'icon-512.png',BASE+'config.js',BASE+'sw.js'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',e=>{
@@ -8,5 +8,8 @@ self.addEventListener('fetch',e=>{
   const u=new URL(e.request.url);
   if(u.origin!==location.origin) return;
   if(u.pathname.endsWith('/config.js')) { e.respondWith(fetch(e.request,{cache:'no-store'})); return; }
-  e.respondWith(fetch(e.request).then(r=>{const copy=r.clone(); caches.open(CACHE).then(c=>c.put(e.request,copy)); return r;}).catch(()=>caches.match(e.request).then(r=>r||caches.match(BASE+'index.html'))));
+  e.respondWith(fetch(e.request,{cache:'no-store'}).then(r=>{
+    if(r.ok){ const copy=r.clone(); caches.open(CACHE).then(c=>c.put(e.request,copy)); }
+    return r;
+  }).catch(()=>caches.match(e.request).then(r=>r||caches.match(BASE+'index.html'))));
 });
