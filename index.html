@@ -801,11 +801,11 @@ function gerarPDF(){
   ${naoItems.length?`<table><thead><tr><th style="width:10%">Nº</th><th style="width:22%">Grupo</th><th style="width:33%">Item</th><th>Observação da pendência</th></tr></thead><tbody>${rows}</tbody></table>`:
   `<div class="empty">Nenhum item foi marcado como NÃO. Não há pendências registradas nesta conferência.</div>`}
   <div class="foot">Relatório gerado pelo CCI 8 — CREPDEC 8. Os itens marcados como NÃO são apresentados em ordem numérica, com suas respectivas observações.</div>
-  <script>window.onload=function(){setTimeout(function(){window.print()},300)}<\/script>
   </body></html>`;
   w.document.open();
   w.document.write(html);
   w.document.close();
+  setTimeout(()=>{try{w.focus();w.print();}catch(e){}},300);
 }
 
 if ('serviceWorker' in navigator) {
