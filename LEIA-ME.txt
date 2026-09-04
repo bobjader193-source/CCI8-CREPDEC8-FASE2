@@ -1,0 +1,4 @@
+CCI 8 — FASE 2 CORRIGIDA
+
+Abra pelo index.html. Preencha a Publishable Key no config.js.
+Não altere a Fase 1.
