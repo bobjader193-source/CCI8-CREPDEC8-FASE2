@@ -1,0 +1,2 @@
+Mantenha o config.js atual do GitHub, pois ele contém a conexão correta do Supabase.
+Substitua index.html e sw.js. manifest e ícones podem permanecer.
