@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" href="/CCI8-CREPDEC8/icon-192.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./config.js"></script>
-<title>CCI 8 — Checklist de Conferência Integrada | V22</title>
+<title>CCI 8 — Checklist de Conferência Integrada | V23</title>
 <style>
 *{box-sizing:border-box}
 :root{
@@ -145,7 +145,7 @@ input:focus,textarea:focus{border-color:var(--dc-blue);box-shadow:0 0 0 3px #2d3
   header{padding:10px 12px}header img{width:56px;height:52px}.version{display:none}
 }
 
-/* ===== V16 PRO — interface visual destacada ===== */
+/* ===== V23 PRO — interface visual destacada ===== */
 body{background:linear-gradient(135deg,#061c48 0%,#0b2e69 42%,#202a79 72%,#5d176e 100%);color:#fff;min-height:100vh}
 body:after{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 15% 20%,#2d7be633 0,transparent 30%),radial-gradient(circle at 90% 80%,#f2832722 0,transparent 28%);z-index:-1}
 header{background:linear-gradient(100deg,#061a43,#0c3273 58%,#6a176e);border-bottom:4px solid var(--dc-orange);box-shadow:0 7px 24px #0005;padding:13px 22px}
@@ -372,11 +372,19 @@ function limparProcessos(){
  processos();
 }
 function processos(){
- const list=getProcesses().sort((a,b)=>new Date(b.updated||b.created||0)-new Date(a.updated||a.created||0));
+ const raw=getProcesses();
+ const map=new Map();
+ for(const p of raw){
+   const k=String(p.processo||p._cloud_id||p.id||'').trim();
+   if(!k) continue;
+   const prev=map.get(k);
+   if(!prev || new Date(p.updated||p.created||0)>new Date(prev.updated||prev.created||0)) map.set(k,p);
+ }
+ const list=[...map.values()].sort((a,b)=>new Date(b.updated||b.created||0)-new Date(a.updated||a.created||0));
  app.innerHTML=`<div class="card">
  <div class="processHeader">
   <div><div class="eyebrow">Gestão de processos</div><h2>Processos</h2>
-  <p>Conferências salvas neste dispositivo. Processos com pendências podem ser reabertos para correção.</p></div>
+  <p>Conferências compartilhadas da CREPDEC 8. Qualquer usuário autorizado pode visualizar, editar e continuar uma análise.</p></div>
   <button class="clearAllBtn" type="button" onclick="limparProcessos()">🗑 LIMPAR TODOS</button>
  </div>
  <div style="margin:10px 0 14px"><span class="statusLegend green">● SEM PENDÊNCIAS</span><span class="statusLegend red">● COM PENDÊNCIAS</span></div>
@@ -392,8 +400,8 @@ function processos(){
      <small>Processo S2iD: ${esc(p.processo||'—')} • ${status}${temNao?' • '+nNao+' pendência(s)':''}</small>
     </div>
     <div class="processActions">
-      ${temNao?`<button type="button" class="btn primary editBtn" onclick="editarProcesso(${JSON.stringify(p.id)})">✎ CORRIGIR</button>`:`<div class="okBadge">✓ FINALIZADO</div>`}
-      <button type="button" class="deleteBtn" title="Excluir processo" aria-label="Excluir processo" onclick="excluirProcesso(${JSON.stringify(p.id)})">×</button>
+      <button type="button" class="btn primary editBtn" onclick="window.editarProcesso(${JSON.stringify(p.id)})">✎ EDITAR</button>
+      <button type="button" class="deleteBtn" title="Excluir processo" aria-label="Excluir processo" onclick="window.excluirProcesso(${JSON.stringify(p.id)})">×</button>
     </div>
    </div>`;
  }).join(''):'<div class="emptyProc">Nenhuma conferência registrada.</div>'}
@@ -415,16 +423,25 @@ function gerarPDFProcesso(id){
  if(!p){alert('Processo não encontrado.');return}
  const anterior=current; current=p; gerarPDF(); current=anterior;
 }
-function editarProcesso(id){
- const p=getProcesses().find(x=>String(x.id)===String(id));
- if(!p){alert('Processo não encontrado.');processos();return}
- current=p; idx=0;
- // Abre diretamente no primeiro item marcado NÃO, facilitando a correção.
- const first=ITEMS.findIndex(x=>current.answers?.[x.id]==='NÃO');
- idx=first>=0?first:0;
+async function editarProcesso(id){
+ let p=getProcesses().find(x=>String(x.id)===String(id));
+ if(!p && phase2Client && phase2User){
+   try{
+     const {data,error}=await phase2Client.from('processos').select('*').eq('id',String(id)).maybeSingle();
+     if(error) throw error;
+     if(data){
+       p={id:data.id,_cloud_id:data.id,municipio:data.municipio,evento:data.evento,cobrade:data.cobrade,data:data.data_ocorrencia||'',hora:data.hora_ocorrencia||'',decreto:data.decreto||'',processo:data.processo_s2id,agente:data.agente,answers:data.respostas||{},observations:data.observacoes||{},created:data.created_at,updated:data.updated_at};
+     }
+   }catch(e){ console.error('CCI8 edit load:',e); }
+ }
+ if(!p){alert('Processo não encontrado.');return}
+ current=p;
+ const groups=[...new Set(ITEMS.map(x=>x.group))];
+ const firstPending=ITEMS.find(x=>current.answers?.[x.id]==='NÃO');
+ idx=firstPending ? Math.max(0,groups.indexOf(firstPending.group)) : 0;
  renderItem();
+ window.scrollTo({top:0,behavior:'instant'});
 }
-
 function newCase(){
  app.innerHTML=`<div class="card">
   <div class="eyebrow">Nova análise</div><h2>Identificação da ocorrência</h2>
@@ -774,6 +791,7 @@ let phase2User=null;
 let phase2OriginalSaveProcess=saveProcess;
 let phase2OriginalProcessos=processos;
 let phase2OriginalRelatorios=relatorios;
+const phase2SaveChains = new Map();
 
 function phase2ShowError(msg){
   const el=document.getElementById('phase2Error');
@@ -797,11 +815,31 @@ function phase2Status(p){
   if(miss>0) return 'em_andamento';
   return Object.values(a).some(v=>v==='NÃO')?'com_pendencias':'concluido';
 }
+
+/*
+ * Mantém apenas uma cópia de cada Processo S2iD na interface local.
+ * Em caso de duplicidade, preserva o registro mais recentemente atualizado.
+ */
+function phase2DeduplicateCloud(records){
+  const byKey=new Map();
+  for(const r of records||[]){
+    const key=(r.processo_s2id||r.id||'').toString().trim();
+    if(!key){ byKey.set('id:'+r.id,r); continue; }
+    const prev=byKey.get('s2id:'+key);
+    if(!prev){ byKey.set('s2id:'+key,r); continue; }
+    const a=new Date(prev.updated_at||prev.created_at||0).getTime();
+    const b=new Date(r.updated_at||r.created_at||0).getTime();
+    if(b>a) byKey.set('s2id:'+key,r);
+  }
+  return [...byKey.values()];
+}
+
 async function phase2SyncAll(){
   if(!phase2Client||!phase2User) return;
   const {data,error}=await phase2Client.from('processos').select('*').order('updated_at',{ascending:false});
   if(error) throw error;
-  const cloud=(data||[]).map(r=>({
+  const unique=phase2DeduplicateCloud(data||[]);
+  const cloud=unique.map(r=>({
     id:r.id, _cloud_id:r.id, municipio:r.municipio, evento:r.evento, cobrade:r.cobrade,
     data:r.data_ocorrencia||'', hora:r.hora_ocorrencia||'', decreto:r.decreto||'',
     processo:r.processo_s2id, agente:r.agente, answers:r.respostas||{}, observations:r.observacoes||{},
@@ -809,23 +847,61 @@ async function phase2SyncAll(){
   }));
   localStorage.setItem('CCI8_PROCESSOS',JSON.stringify(cloud));
 }
+
+/*
+ * Gravação serializada por processo.
+ * Impede que vários cliques rápidos criem várias linhas para a mesma análise.
+ */
 async function phase2Push(p){
   if(!phase2Client||!phase2User||!p) return;
-  const payload={municipio:p.municipio||'',evento:p.evento||'',cobrade:p.cobrade||'',data_ocorrencia:p.data||null,
-    hora_ocorrencia:p.hora||null,decreto:p.decreto||null,processo_s2id:p.processo||'',agente:p.agente||'',
-    status:phase2Status(p),respostas:p.answers||{},observacoes:p.observations||{},atualizado_por:phase2User.id};
-  let res;
-  if(p._cloud_id){ res=await phase2Client.from('processos').update(payload).eq('id',p._cloud_id).select('*').single(); }
-  else { payload.criado_por=phase2User.id; res=await phase2Client.from('processos').insert(payload).select('*').single(); }
-  if(res.error) throw res.error;
-  const r=res.data; p._cloud_id=r.id; p.id=p.id||r.id; p.created=r.created_at; p.updated=r.updated_at;
-  const list=getProcesses(); const ix=list.findIndex(x=>String(x.id)===String(p.id)); if(ix>=0) list[ix]=p; else list.unshift(p); localStorage.setItem('CCI8_PROCESSOS',JSON.stringify(list));
+  const key=String(p._cloud_id||p.processo||p.id||'processo');
+  const previous=phase2SaveChains.get(key)||Promise.resolve();
+  const run=previous.catch(()=>{}).then(async()=>{
+    const payload={
+      municipio:p.municipio||'', evento:p.evento||'', cobrade:p.cobrade||'',
+      data_ocorrencia:p.data||null, hora_ocorrencia:p.hora||null, decreto:p.decreto||null,
+      processo_s2id:p.processo||'', agente:p.agente||'', status:phase2Status(p),
+      respostas:p.answers||{}, observacoes:p.observations||{}, atualizado_por:phase2User.id
+    };
+    let res;
+    if(p._cloud_id){
+      res=await phase2Client.from('processos').update(payload).eq('id',p._cloud_id).select('*').single();
+    }else{
+      // Antes de inserir, procura um processo já existente com o mesmo S2iD.
+      // Isso evita duplicidades mesmo sem depender de constraint UNIQUE.
+      let existing=null;
+      if(payload.processo_s2id){
+        const q=await phase2Client.from('processos').select('*').eq('processo_s2id',payload.processo_s2id).order('updated_at',{ascending:false}).limit(1).maybeSingle();
+        if(q.error) throw q.error;
+        existing=q.data||null;
+      }
+      if(existing){
+        p._cloud_id=existing.id;
+        payload.criado_por=existing.criado_por||phase2User.id;
+        res=await phase2Client.from('processos').update(payload).eq('id',existing.id).select('*').single();
+      }else{
+        payload.criado_por=phase2User.id;
+        res=await phase2Client.from('processos').insert(payload).select('*').single();
+      }
+    }
+    if(res.error) throw res.error;
+    const r=res.data;
+    p._cloud_id=r.id; p.id=r.id; p.created=r.created_at; p.updated=r.updated_at;
+    const list=getProcesses().filter(x=>String(x._cloud_id||x.id)!==String(r.id) && String(x.processo||'')!==String(p.processo||''));
+    list.unshift(p);
+    localStorage.setItem('CCI8_PROCESSOS',JSON.stringify(list));
+  });
+  phase2SaveChains.set(key,run);
+  try{ await run; }
+  finally{ if(phase2SaveChains.get(key)===run) phase2SaveChains.delete(key); }
 }
 async function phase2SaveProcess(){
   phase2OriginalSaveProcess();
   const p=current; if(!p||!phase2User) return;
-  try{ await phase2Push(p); }catch(e){ console.error('CCI8 cloud save:',e); }
+  try{ await phase2Push(p); }
+  catch(e){ console.error('CCI8 cloud save:',e); phase2ShowError('Não foi possível sincronizar a análise com o banco central. A cópia local foi mantida.'); }
 }
+
 async function phase2SignIn(){
   const email=document.getElementById('phase2Email')?.value.trim();
   const password=document.getElementById('phase2Password')?.value||'';
@@ -850,13 +926,81 @@ async function phase2SignIn(){
   finally{ btn.disabled=false; btn.textContent='ENTRAR'; }
 }
 
-/* Login via clique/Enter */
 document.getElementById('phase2LoginBtn')?.addEventListener('click',phase2SignIn);
 ['phase2Email','phase2Password'].forEach(id=>document.getElementById(id)?.addEventListener('keydown',e=>{if(e.key==='Enter')phase2SignIn();}));
 
+/*
+ * Relatórios: abre a página imediatamente e imprime depois.
+ * Isso reduz a chance de o navegador bloquear a janela após a sincronização.
+ */
+function gerarPDFProcesso(id){
+  const p=getProcesses().find(x=>String(x.id)===String(id));
+  if(!p){alert('Processo não encontrado.');return}
+
+  const w=window.open('about:blank','cci8_relatorio');
+  if(!w){
+    alert('O navegador bloqueou a abertura do relatório. Permita pop-ups para o CCI 8 e tente novamente.');
+    return;
+  }
+
+  const anterior=current;
+  current=p;
+  try{
+    gerarPDFEmJanela(w);
+  }finally{
+    current=anterior;
+  }
+}
+
+function gerarPDFEmJanela(w){
+  const obs=current.observations||{};
+  const naoItems=ITEMS.filter(x=>current.answers?.[x.id]==='NÃO');
+  const rows=naoItems.map(x=>{
+    const o=obs[x.id]||'';
+    return `<tr><td class="num">${esc(x.id)}</td><td>${esc(x.group)}</td><td>${esc(x.text)}</td><td>${esc(o)}</td></tr>`;
+  }).join('');
+  const sim=ITEMS.filter(x=>current.answers?.[x.id]==='SIM').length;
+  const nao=naoItems.length;
+  const na=ITEMS.filter(x=>current.answers?.[x.id]==='N/A').length;
+  const html=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>CCI 8 — Relatório</title>
+  <style>
+  @page{size:A4;margin:14mm}body{font-family:Arial,sans-serif;color:#17243b;font-size:10.5px;margin:0}
+  h1{color:#0a3472;margin:0 0 3px;font-size:20px}h2{color:#8b2222;margin:18px 0 8px;font-size:15px}.sub{color:#66758b;margin-bottom:14px}
+  .info{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;border:1px solid #ccd5df;padding:10px;border-radius:7px}
+  .info b{color:#0a3472}.cards{display:flex;gap:8px;margin:11px 0}.card{border:1px solid #ccd5df;padding:8px;border-radius:6px;flex:1;text-align:center}.numBig{font-size:18px;font-weight:bold}
+  table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #cfd7e0;padding:7px;vertical-align:top}th{background:#eaf0f7;text-align:left}.num{font-weight:bold;white-space:nowrap}
+  .empty{padding:16px;border:1px solid #b8d9c3;background:#edf8f0;border-radius:7px;color:#176b37;font-weight:bold}.foot{margin-top:15px;color:#66758b;font-size:9px}
+  .toolbar{position:sticky;top:0;background:#fff;padding:10px 0;border-bottom:1px solid #ddd;margin-bottom:12px}.toolbar button{padding:9px 14px;border:0;border-radius:7px;background:#0a3472;color:#fff;font-weight:700;cursor:pointer}
+  @media print{.toolbar{display:none}}
+  </style></head><body>
+  <div class="toolbar"><button onclick="window.print()">🖨️ IMPRIMIR / SALVAR PDF</button></div>
+  <h1>CCI 8 — CREPDEC 8</h1><div class="sub">Relatório Final de Pendências • CCI 8 — CREPDEC 8 • S2iD — Nível 1</div>
+  <div class="info"><div><b>Município:</b> ${esc(current.municipio||'')}</div><div><b>Evento:</b> ${esc(current.evento||'')}</div>
+  <div><b>COBRADE:</b> ${esc(current.cobrade||'')}</div><div><b>Data:</b> ${esc(current.data||'')}</div>
+  <div><b>Hora:</b> ${esc(current.hora||'')}</div><div><b>Decreto:</b> ${esc(current.decreto||'')}</div>
+  <div><b>Processo S2iD:</b> ${esc(current.processo||'')}</div><div><b>Agente:</b> ${esc(current.agente||'')}</div></div>
+  <div class="cards"><div class="card"><div class="numBig">${sim}</div>SIM</div><div class="card"><div class="numBig">${nao}</div>NÃO</div><div class="card"><div class="numBig">${na}</div>N/A</div></div>
+  <h2>Marcações NÃO e respectivas observações</h2>
+  ${naoItems.length?`<table><thead><tr><th>Nº</th><th>Grupo</th><th>Item</th><th>Observação da pendência</th></tr></thead><tbody>${rows}</tbody></table>`:`<div class="empty">Nenhum item foi marcado como NÃO. Não há pendências registradas nesta conferência.</div>`}
+  <div class="foot">Relatório gerado pelo CCI 8 — CREPDEC 8. Os itens marcados como NÃO são apresentados em ordem numérica, com suas respectivas observações.</div>
+  </body></html>`;
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+}
+
 /* Sincronização antes de abrir Processos/Relatórios */
-processos=async function(){ await phase2SyncAll(); phase2OriginalProcessos(); };
-relatorios=async function(){ await phase2SyncAll(); phase2OriginalRelatorios(); };
+processos=async function(){
+  try{ await phase2SyncAll(); }
+  catch(e){ console.error('CCI8 cloud sync:',e); }
+  phase2OriginalProcessos();
+};
+relatorios=async function(){
+  try{ await phase2SyncAll(); }
+  catch(e){ console.error('CCI8 cloud sync:',e); }
+  phase2OriginalRelatorios();
+};
 saveProcess=phase2SaveProcess;
 
 (async()=>{
