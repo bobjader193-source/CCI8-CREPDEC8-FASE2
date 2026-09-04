@@ -11,6 +11,13 @@
 <link rel="apple-touch-icon" href="/CCI8-CREPDEC8-FASE2/icon-192.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./config.js"></script>
+<script>
+  window.CCI8_SUPABASE_CONFIG = window.CCI8_SUPABASE_CONFIG || {
+    url: "https://tmyjxdmipwlusciaqtuc.supabase.co",
+    key: "sb_publishable_J_B5RCJlUnPoelOXn7iMuw_rStJ8JwI"
+  };
+  window.supabase = window.supabase || globalThis.supabase;
+</script>
 <title>CCI 8 — Checklist de Conferência Integrada | V28</title>
 <style>
 *{box-sizing:border-box}
@@ -1190,8 +1197,13 @@ window.gerarPDFProcesso=phase2OpenReport;
 
 (async()=>{
   try{
-    if(!window.supabase||!window.CCI8_SUPABASE_CONFIG) throw new Error('Configuração do Supabase não encontrada.');
-    phase2Client=window.supabase.createClient(CCI8_SUPABASE_CONFIG.url,CCI8_SUPABASE_CONFIG.key);
+    let attempts=0;
+    while((!window.supabase || !window.CCI8_SUPABASE_CONFIG) && attempts<50){
+      await new Promise(r=>setTimeout(r,100)); attempts++;
+    }
+    if(!window.supabase) throw new Error('Biblioteca do Supabase não carregou.');
+    if(!window.CCI8_SUPABASE_CONFIG) throw new Error('Configuração do Supabase não carregou.');
+    phase2Client=window.supabase.createClient(window.CCI8_SUPABASE_CONFIG.url,window.CCI8_SUPABASE_CONFIG.key);
     const {data:{session}}=await phase2Client.auth.getSession();
     if(session?.user){
       phase2User=session.user;
