@@ -1,4 +1,9 @@
 CCI 8 — FASE 2 CORRIGIDA
 
-Abra pelo index.html. Preencha a Publishable Key no config.js.
-Não altere a Fase 1.
+1. No config.js, cole a Publishable Key do Supabase no campo key.
+2. Publique estes arquivos no repositório CCI8-CREPDEC8-FASE2.
+3. GitHub Pages: main / (root).
+4. Endereço de teste:
+https://bobjader193-source.github.io/CCI8-CREPDEC8-FASE2/
+
+A Fase 1 permanece intacta em outro repositório.
