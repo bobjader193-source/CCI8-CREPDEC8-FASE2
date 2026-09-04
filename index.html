@@ -1018,32 +1018,196 @@ function gerarPDFEmJanela(w){
   w.focus();
 }
 
-/* Sincronização antes de abrir Processos/Relatórios */
-processos=async function(){
-  try{ await phase2SyncAll(); }
-  catch(e){ console.error('CCI8 cloud sync:',e); }
-  phase2OriginalProcessos();
-};
-relatorios=async function(){
-  try{ await phase2SyncAll(); }
-  catch(e){ console.error('CCI8 cloud sync:',e); }
-  phase2OriginalRelatorios();
-};
-saveProcess=phase2SaveProcess;
+/* FASE 2 — Processos, edição e relatórios diretamente no Supabase.
+   Esta seção substitui a camada local usada pela interface de Processos/Relatórios.
+*/
+function phase2MapRow(r){
+  return {
+    id:r.id,
+    _cloud_id:r.id,
+    municipio:r.municipio||'', evento:r.evento||'', cobrade:r.cobrade||'',
+    data:r.data_ocorrencia||'', hora:r.hora_ocorrencia||'', decreto:r.decreto||'',
+    processo:r.processo_s2id||'', agente:r.agente||'',
+    answers:r.respostas||{}, observations:r.observacoes||{},
+    created:r.created_at, updated:r.updated_at,
+    status:r.status||''
+  };
+}
 
-// Garante que os botões dinâmicos chamem sempre as versões da Fase 2.
-window.editarProcesso=editarProcesso;
-window.gerarPDFProcesso=gerarPDFProcesso;
+async function phase2CloudList(){
+  if(!phase2Client||!phase2User) return [];
+  const {data,error}=await phase2Client
+    .from('processos').select('*').order('updated_at',{ascending:false});
+  if(error) throw error;
+  return phase2DeduplicateCloud(data||[]).map(phase2MapRow);
+}
+
+async function phase2CloudGet(id){
+  if(!phase2Client||!phase2User) throw new Error('Sessão não autenticada.');
+  const {data,error}=await phase2Client.from('processos').select('*').eq('id',String(id)).single();
+  if(error) throw error;
+  return phase2MapRow(data);
+}
+
+function phase2SaveLocalMirror(p){
+  const list=getProcesses();
+  const key=String(p._cloud_id||p.id||'');
+  const without=list.filter(x=>String(x._cloud_id||x.id||'')!==key && String(x.processo||'')!==String(p.processo||''));
+  without.unshift(p);
+  localStorage.setItem('CCI8_PROCESSOS',JSON.stringify(without));
+}
+
+async function phase2EditProcess(id){
+  try{
+    const p=await phase2CloudGet(id);
+    current=p;
+    const firstPending=GROUPS.findIndex(g=>g.items.some(item=>!current.answers?.[item.id]));
+    groupIndex=firstPending>=0?firstPending:0;
+    renderItem();
+  }catch(e){
+    console.error('CCI8 editar:',e);
+    alert('Não foi possível abrir a conferência para edição.\n\n'+(e.message||e));
+  }
+}
+window.phase2EditProcess=phase2EditProcess;
+
+function phase2ReportHtml(p){
+  const obs=p.observations||{};
+  const naoItems=ITEMS.filter(x=>p.answers?.[x.id]==='NÃO');
+  const rows=naoItems.map(x=>{
+    const o=obs[x.id]||'';
+    return `<tr><td class="num">${esc(x.id)}</td><td>${esc(x.group)}</td><td>${esc(x.text)}</td><td>${esc(o)}</td></tr>`;
+  }).join('');
+  const sim=ITEMS.filter(x=>p.answers?.[x.id]==='SIM').length;
+  const nao=naoItems.length;
+  const na=ITEMS.filter(x=>p.answers?.[x.id]==='N/A').length;
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>CCI 8 — Relatório</title>
+  <style>
+  @page{size:A4;margin:14mm}body{font-family:Arial,sans-serif;color:#17243b;font-size:10.5px;margin:0}
+  h1{color:#0a3472;margin:0 0 3px;font-size:20px}h2{color:#8b2222;margin:18px 0 8px;font-size:15px}.sub{color:#66758b;margin-bottom:14px}
+  .info{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;border:1px solid #ccd5df;padding:10px;border-radius:7px}
+  .info b{color:#0a3472}.cards{display:flex;gap:8px;margin:11px 0}.card{border:1px solid #ccd5df;padding:8px;border-radius:6px;flex:1;text-align:center}.numBig{font-size:18px;font-weight:bold}
+  table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #cfd7e0;padding:7px;vertical-align:top}th{background:#eaf0f7;text-align:left}.num{font-weight:bold;white-space:nowrap}
+  .empty{padding:16px;border:1px solid #b8d9c3;background:#edf8f0;border-radius:7px;color:#176b37;font-weight:bold}.foot{margin-top:15px;color:#66758b;font-size:9px}
+  .toolbar{position:sticky;top:0;background:#fff;padding:10px 0;border-bottom:1px solid #ddd;margin-bottom:12px}.toolbar button{padding:9px 14px;border:0;border-radius:7px;background:#0a3472;color:#fff;font-weight:700;cursor:pointer}
+  @media print{.toolbar{display:none}}
+  </style></head><body>
+  <div class="toolbar"><button onclick="window.print()">🖨️ IMPRIMIR / SALVAR PDF</button></div>
+  <h1>CCI 8 — CREPDEC 8</h1><div class="sub">Relatório Final de Pendências • CCI 8 — CREPDEC 8 • S2iD — Nível 1</div>
+  <div class="info"><div><b>Município:</b> ${esc(p.municipio||'')}</div><div><b>Evento:</b> ${esc(p.evento||'')}</div>
+  <div><b>COBRADE:</b> ${esc(p.cobrade||'')}</div><div><b>Data:</b> ${esc(p.data||'')}</div>
+  <div><b>Hora:</b> ${esc(p.hora||'')}</div><div><b>Decreto:</b> ${esc(p.decreto||'')}</div>
+  <div><b>Processo S2iD:</b> ${esc(p.processo||'')}</div><div><b>Agente:</b> ${esc(p.agente||'')}</div></div>
+  <div class="cards"><div class="card"><div class="numBig">${sim}</div>SIM</div><div class="card"><div class="numBig">${nao}</div>NÃO</div><div class="card"><div class="numBig">${na}</div>N/A</div></div>
+  <h2>Marcações NÃO e respectivas observações</h2>
+  ${naoItems.length?`<table><thead><tr><th>Nº</th><th>Grupo</th><th>Item</th><th>Observação da pendência</th></tr></thead><tbody>${rows}</tbody></table>`:`<div class="empty">Nenhum item foi marcado como NÃO. Não há pendências registradas nesta conferência.</div>`}
+  <div class="foot">Relatório gerado pelo CCI 8 — CREPDEC 8. Os itens marcados como NÃO são apresentados em ordem numérica, com suas respectivas observações.</div>
+  </body></html>`;
+}
+
+async function phase2OpenReport(id){
+  // Abre a janela imediatamente para evitar bloqueio de pop-up durante o await.
+  const w=window.open('about:blank','cci8_relatorio');
+  if(!w){alert('O navegador bloqueou a janela do relatório. Permita pop-ups para este site.');return;}
+  w.document.write('<p style="font-family:Arial;padding:24px">Carregando relatório...</p>');
+  try{
+    const p=await phase2CloudGet(id);
+    w.document.open();
+    w.document.write(phase2ReportHtml(p));
+    w.document.close();
+    w.focus();
+  }catch(e){
+    console.error('CCI8 PDF:',e);
+    w.document.open();
+    w.document.write('<p style="font-family:Arial;padding:24px">Não foi possível gerar o relatório.<br><br>'+esc(e.message||String(e))+'</p>');
+    w.document.close();
+  }
+}
+window.phase2OpenReport=phase2OpenReport;
+
+function phase2RenderProcessRows(list, mode){
+  if(!list.length) return '<div class="emptyProc">Nenhuma conferência registrada.</div>';
+  return list.map(p=>{
+    const nNao=Object.values(p.answers||{}).filter(v=>v==='NÃO').length;
+    const temNao=nNao>0;
+    const status=temNao?'COM PENDÊNCIAS':'SEM PENDÊNCIAS';
+    const cls=temNao?'procRed':'procGreen';
+    const action=mode==='reports'
+      ? `<button type="button" class="btn primary" onclick="window.phase2OpenReport(${JSON.stringify(String(p.id))})">▤ PDF</button>`
+      : `<button type="button" class="btn primary editBtn" onclick="window.phase2EditProcess(${JSON.stringify(String(p.id))})">✎ EDITAR</button>`;
+    return `<div class="processRow ${cls}">
+      <div class="processMain">
+        <div class="processDate">${formatDateTime(p.updated||p.created)}</div>
+        <b>${esc(p.municipio||'Sem município')} — ${esc(p.evento||'Sem evento')}</b>
+        <small>Processo S2iD: ${esc(p.processo||'—')} • ${status}${temNao?' • '+nNao+' pendência(s)':''}</small>
+      </div>
+      <div class="processActions">${action}</div>
+    </div>`;
+  }).join('');
+}
+
+async function phase2ShowProcesses(){
+  try{
+    const list=await phase2CloudList();
+    // Mantém um espelho local apenas como fallback, mas a tela lê do banco.
+    localStorage.setItem('CCI8_PROCESSOS',JSON.stringify(list));
+    app.innerHTML=`<div class="card">
+      <div class="processHeader">
+        <div><div class="eyebrow">Gestão de processos</div><h2>Processos</h2>
+        <p>Conferências compartilhadas da CREPDEC 8. Qualquer usuário autorizado pode visualizar, editar e continuar uma análise.</p></div>
+        <button class="clearAllBtn" type="button" onclick="limparProcessos()">🗑 LIMPAR TODOS</button>
+      </div>
+      <div style="margin:10px 0 14px"><span class="statusLegend green">● SEM PENDÊNCIAS</span><span class="statusLegend red">● COM PENDÊNCIAS</span></div>
+      ${phase2RenderProcessRows(list,'processes')}
+      <button class="btn ghost" style="margin-top:14px" onclick="home()">‹ Voltar</button>
+    </div>`;
+  }catch(e){
+    console.error('CCI8 processos:',e);
+    app.innerHTML=`<div class="card"><div class="eyebrow">Gestão de processos</div><h2>Processos</h2><div class="emptyProc">Não foi possível carregar os processos do banco central.<br><br>${esc(e.message||String(e))}</div><button class="btn ghost" style="margin-top:14px" onclick="home()">‹ Voltar</button></div>`;
+  }
+}
+
+async function phase2ShowReports(){
+  try{
+    const list=await phase2CloudList();
+    localStorage.setItem('CCI8_PROCESSOS',JSON.stringify(list));
+    app.innerHTML=`<div class="card"><div class="eyebrow">Documentos</div><h2>Relatórios</h2><p>Gere o relatório PDF de uma conferência já registrada.</p>
+      ${phase2RenderProcessRows(list,'reports')}
+      <button class="btn ghost" style="margin-top:14px" onclick="home()">‹ Voltar</button></div>`;
+  }catch(e){
+    console.error('CCI8 relatórios:',e);
+    app.innerHTML=`<div class="card"><div class="eyebrow">Documentos</div><h2>Relatórios</h2><div class="emptyProc">Não foi possível carregar os processos do banco central.<br><br>${esc(e.message||String(e))}</div><button class="btn ghost" style="margin-top:14px" onclick="home()">‹ Voltar</button></div>`;
+  }
+}
+
+processos=phase2ShowProcesses;
+relatorios=phase2ShowReports;
+saveProcess=phase2SaveProcess;
+window.editarProcesso=phase2EditProcess;
+window.gerarPDFProcesso=phase2OpenReport;
 
 (async()=>{
   try{
     if(!window.supabase||!window.CCI8_SUPABASE_CONFIG) throw new Error('Configuração do Supabase não encontrada.');
     phase2Client=window.supabase.createClient(CCI8_SUPABASE_CONFIG.url,CCI8_SUPABASE_CONFIG.key);
     const {data:{session}}=await phase2Client.auth.getSession();
-    if(session?.user){ phase2User=session.user; await phase2SyncAll(); phase2HideLogin(); phase2AddUserBadge(); home(); }
-    else phase2ShowLogin();
-    phase2Client.auth.onAuthStateChange((_,s)=>{ phase2User=s?.user||null; if(!phase2User){phase2ShowLogin();} });
-  }catch(e){ console.error(e); phase2ShowError(e.message||String(e)); phase2ShowLogin(); }
+    if(session?.user){
+      phase2User=session.user;
+      phase2HideLogin();
+      phase2AddUserBadge();
+      home();
+    }else{
+      phase2ShowLogin();
+    }
+    phase2Client.auth.onAuthStateChange((_,s)=>{
+      phase2User=s?.user||null;
+      if(!phase2User){phase2ShowLogin();}
+    });
+  }catch(e){
+    console.error(e);
+    phase2ShowError(e.message||String(e));
+    phase2ShowLogin();
+  }
 })();
 
 </script>
